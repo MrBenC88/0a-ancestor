@@ -1,0 +1,127 @@
+#!/usr/bin/env bash
+# Usage: scaffold skill|agent <name> [--company] [--desc "When to use it."]
+#                 [--tier heavy|standard|light] [--tools read,shell] [--output "..."]
+#
+# Creates a skill (skills/<name>/SKILL.md) or agent (agents/<name>.md) skeleton,
+# adds it to the index, then links/generates it. With --company, the name gets
+# the -<COMPANY_TAG> suffix and it lands in company/ (never committed).
+# Refuses to overwrite; lists similar existing names so you can extend instead.
+set -euo pipefail
+. "$(cd "$(dirname "$0")/../../.." && pwd -P)/scripts/lib/common.sh"
+
+KIND="${1:-}"; NAME="${2:-}"
+case "$KIND" in skill|agent) ;; -h|--help|"") usage_from_header "$0"; exit 0 ;; *) die "kind must be skill or agent" ;; esac
+[ -n "$NAME" ] || die "missing <name>"
+shift 2
+COMPANY=0; DESC=""; TIER="light"; TOOLS="read"; OUTPUT=""
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --company) COMPANY=1 ;;
+    --desc) DESC="${2:?}"; shift ;;
+    --tier) TIER="${2:?}"; shift ;;
+    --tools) TOOLS="${2:?}"; shift ;;
+    --output) OUTPUT="${2:?}"; shift ;;
+    *) die "unknown flag: $1" ;;
+  esac
+  shift
+done
+
+printf '%s' "$NAME" | grep -qE '^[a-z0-9]+(-[a-z0-9]+)*$' || die "name must be kebab-case: $NAME"
+case "$TIER" in heavy|standard|light) ;; *) die "tier must be heavy, standard or light" ;; esac
+[ -n "$DESC" ] || DESC="Use when <situation>; <what it does in one clause>."
+
+if [ "$COMPANY" = 1 ]; then
+  tag="$(company_tag)"
+  [ -n "$tag" ] || die "COMPANY_TAG not set (shell/local.zsh or me/context.md); run bootstrap.sh --tag <code>"
+  case "$NAME" in *-"$tag") ;; *) NAME="$NAME-$tag" ;; esac
+  root="$ANCESTOR/company"
+else
+  tag="$(company_tag)"
+  if [ -n "$tag" ] && printf '%s %s' "$NAME" "$DESC" | grep -qiwF -e "$tag"; then
+    die "generic $KIND mentions the company tag; use --company or remove it"
+  fi
+  root="$ANCESTOR"
+fi
+
+# Similar names: share the first word, or contain each other.
+first="${NAME%%-*}"
+similar="$(
+  for p in "$ANCESTOR"/skills/*/ "$ANCESTOR"/company/skills/*/ "$ANCESTOR"/agents/*.md "$ANCESTOR"/company/agents/*.md; do
+    [ -e "$p" ] || continue
+    p="${p%/}"; p="$(basename "$p" .md)"; printf '%s\n' "$p"
+  done | sort -u | grep -E "(^$first(-|$)|$NAME)" || true)"
+
+if [ "$KIND" = skill ]; then
+  dst="$root/skills/$NAME/SKILL.md"
+  [ -e "$dst" ] && die "already exists: ${dst#"$ANCESTOR"/} (extend it instead)"
+  mkdir -p "$(dirname "$dst")"
+  cat > "$dst" <<EOF
+---
+name: $NAME
+description: $DESC
+---
+
+# $NAME
+
+## When to use
+
+-
+
+## Inputs
+
+- Company values (if any): read from \`me/context.md\` — never hardcode them.
+
+## Steps
+
+1.
+
+## Output
+
+Return exactly:
+
+-
+EOF
+  index="$root/skills/INDEX.md"
+  [ -f "$index" ] || printf '# Skills\n\nOne line per skill. Maintained by /create-skill.\n\n| Skill | When to use |\n| --- | --- |\n' > "$index"
+  printf '| `%s` | %s |\n' "$NAME" "$DESC" >> "$index"
+  "$ANCESTOR/scripts/link-skills" >/dev/null || warn "link-skills failed; run it by hand"
+else
+  dst="$root/agents/$NAME.md"
+  [ -e "$dst" ] && die "already exists: ${dst#"$ANCESTOR"/} (extend it instead)"
+  mkdir -p "$(dirname "$dst")"
+  [ -n "$OUTPUT" ] || OUTPUT="<what it returns, in at most 15 lines>"
+  cat > "$dst" <<EOF
+---
+name: $NAME
+description: $DESC
+tier: $TIER
+tools: $TOOLS
+output: $OUTPUT
+---
+
+You are the $NAME agent.
+
+## Job
+
+-
+
+## Rules
+
+- Read company values from \`0a-ancestor/me/context.md\`; never guess them.
+- Reply in at most 15 lines; put detail in a handoff note via /handoff.
+
+## Output
+
+$OUTPUT
+EOF
+  if [ "$COMPANY" = 0 ]; then
+    printf '| `%s` | %s | %s |\n' "$NAME" "$TIER" "$DESC" >> "$ANCESTOR/agents/delegation.md"
+  fi
+  "$ANCESTOR/scripts/gen-agents" >/dev/null || warn "gen-agents failed; run it by hand"
+fi
+
+ok "created ${dst#"$ANCESTOR"/}"
+if [ -n "$similar" ]; then
+  warn "similar existing names — extend one of these instead if it overlaps:"
+  printf '%s\n' "$similar" | sed 's/^/  /' >&2
+fi

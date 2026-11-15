@@ -1,0 +1,58 @@
+#!/usr/bin/env bash
+# desc: link skills/ and company/skills/ into each agent tool's skills dir
+# Usage: link-skills [--check] [--dry-run]
+#
+# Links every skills/<name>/ and company/skills/<name>/ that has a SKILL.md
+# into each tool's user-level skills dir that exists or is configured:
+#   ~/.claude/skills  ~/.codex/skills  ~/.agents/skills
+# A tool counts as present when its base dir (~/.claude, ~/.codex, ~/.agents)
+# exists. Extra base dirs can be listed in shell/local.zsh as SKILL_HOMES="...".
+# Dangling links that point into this repo are removed. Idempotent.
+set -euo pipefail
+. "$(dirname "$0")/lib/common.sh"
+
+CHECK=0; DRY_RUN=0
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --check) CHECK=1 ;;
+    --dry-run) DRY_RUN=1 ;;
+    -h|--help) usage_from_header "$0"; exit 0 ;;
+    *) die "unknown flag: $1 (see --help)" ;;
+  esac
+  shift
+done
+export CHECK DRY_RUN
+
+# Tool base dirs to link into.
+bases=""
+for b in "$HOME/.claude" "$HOME/.codex" "$HOME/.agents"; do
+  [ -d "$b" ] && bases="$bases $b"
+done
+for b in $(local_var SKILL_HOMES); do
+  b="${b/#\~/$HOME}"
+  case " $bases " in *" $b "*) ;; *) bases="$bases $b" ;; esac
+done
+if [ -z "${bases// /}" ]; then
+  warn "no agent tool dirs found (~/.claude, ~/.codex, ~/.agents); nothing to link"
+  exit 0
+fi
+
+seen=" "
+for src in "$ANCESTOR"/skills/*/ "$ANCESTOR"/company/skills/*/; do
+  src="${src%/}"
+  [ -f "$src/SKILL.md" ] || continue
+  name="$(basename "$src")"
+  case "$seen" in *" $name "*) warn "duplicate skill name '$name' in company/ — skipped"; continue ;; esac
+  seen="$seen$name "
+  for b in $bases; do
+    ensure_link "$src" "$b/skills/$name"
+  done
+done
+
+for b in $bases; do prune_dead_links "$b/skills"; done
+
+if [ "$CHECK" = 1 ]; then
+  [ "$N_PROBLEMS" = 0 ] && ok "skills: all linked ($N_SKIPPED links)"
+  exit $((N_PROBLEMS > 0))
+fi
+dim "skills: linked $N_LINKED · unchanged $N_SKIPPED · backed up $N_BACKED"

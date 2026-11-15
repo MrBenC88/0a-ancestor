@@ -1,0 +1,14 @@
+{
+  "recommendations": [
+    "editorconfig.editorconfig",
+    "timonwong.shellcheck",
+    "foxundermoon.shell-format",
+    "eamodio.gitlens",
+    "github.vscode-pull-request-github",
+    "github.copilot-chat",
+    "anthropic.claude-code",
+    "ms-kubernetes-tools.vscode-kubernetes-tools",
+    "redhat.vscode-yaml",
+    "yzhang.markdown-all-in-one"
+  ]
+}

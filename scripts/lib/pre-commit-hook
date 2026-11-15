@@ -1,0 +1,50 @@
+#!/usr/bin/env bash
+# Pre-commit hook for 0a-ancestor (installed by bootstrap.sh).
+# Blocks the commit if any staged file name or content contains:
+#   - the configured COMPANY_TAG (whole word, case-insensitive)
+#   - a hostname from shell/local.zsh (BLOCKED_HOSTS="..." or any URL in it)
+#   - a hostname from internal_hosts: in me/context.md
+# Don't bypass with --no-verify; move the content to company/ or local.zsh.
+set -euo pipefail
+. "$(dirname "$0")/common.sh"
+
+tag="$(company_tag)"
+
+hosts="$(local_var BLOCKED_HOSTS)"
+if [ -f "$LOCAL_ZSH" ]; then
+  hosts="$hosts $(grep -oE 'https?://[A-Za-z0-9.-]+' "$LOCAL_ZSH" | sed -E 's#https?://##' | tr '\n' ' ' || true)"
+fi
+hosts="$hosts $(context_var internal_hosts | tr ',' ' ')"
+
+patterns="$(mktemp)"; trap 'rm -f "$patterns"' EXIT
+for h in $hosts; do
+  case "$h" in *.*) printf '%s\n' "$h" >> "$patterns" ;; esac   # only real hostnames
+done
+
+if [ -z "$tag" ] && [ ! -s "$patterns" ]; then exit 0; fi
+if [ -n "$tag" ] && [ "${#tag}" -lt 2 ]; then
+  warn "COMPANY_TAG '$tag' is too short to check safely; skipping tag check"; tag=""
+fi
+
+bad=0
+while IFS= read -r -d '' f; do
+  hits=""
+  if [ -n "$tag" ]; then
+    if printf '%s' "$f" | grep -qiwF -e "$tag"; then hits="  file name contains the company tag"$'\n'; fi
+    hits="$hits$(git show ":$f" | grep -nIiwF -e "$tag" | head -n 3 | sed 's/^/  line /' || true)"
+  fi
+  if [ -s "$patterns" ]; then
+    hits="$hits$(git show ":$f" | grep -nIiF -f "$patterns" | head -n 3 | sed 's/^/  line /' || true)"
+  fi
+  if [ -n "${hits//[[:space:]]/}" ]; then
+    err "$f contains company data:"
+    printf '%s\n' "$hits" | sed '/^$/d' >&2
+    bad=1
+  fi
+done < <(git diff --cached --name-only --diff-filter=ACMR -z)
+
+if [ "$bad" = 1 ]; then
+  err "commit blocked: company tag or internal hostname in staged files."
+  info "Move it to company/, shell/local.zsh or me/context.md, or use the <company-tag> placeholder." >&2
+  exit 1
+fi
