@@ -1,0 +1,54 @@
+#!/usr/bin/env bash
+# desc: delete local branches already merged into the default branch
+# Usage: gclean [--dry-run] [--yes] [--repo PATH]
+#
+# Lists local branches merged into origin/<default> (or the local default when
+# there is no origin), excluding the default branch, the current branch and
+# main/master/develop. Asks before deleting; --yes skips the prompt.
+# Squash-merged branches are not detected (their commits differ); delete those by hand.
+set -euo pipefail
+. "$(dirname "$0")/lib/common.sh"
+
+DRY_RUN=0; ASSUME_YES=0; REPO="."
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --dry-run|-n) DRY_RUN=1 ;;
+    --yes|-y) ASSUME_YES=1 ;;
+    --repo) REPO="${2:?--repo needs a path}"; shift ;;
+    -h|--help) usage_from_header "$0"; exit 0 ;;
+    *) die "unknown flag: $1 (see --help)" ;;
+  esac
+  shift
+done
+export ASSUME_YES
+cd "$REPO"
+git rev-parse --git-dir >/dev/null 2>&1 || die "not a git repo: $REPO"
+
+def="$(default_branch .)"
+base="$def"
+git show-ref --verify --quiet "refs/remotes/origin/$def" && base="origin/$def"
+git show-ref --verify --quiet "refs/heads/$def" || git show-ref --verify --quiet "refs/remotes/$base" ||
+  die "default branch '$def' not found"
+cur="$(git symbolic-ref --quiet --short HEAD 2>/dev/null || true)"
+
+branches=""
+while IFS= read -r b; do
+  case "$b" in "$def"|"$cur"|main|master|develop|"") continue ;; esac
+  branches="$branches$b"$'\n'
+done <<EOF
+$(git for-each-ref --format='%(refname:short)' --merged "$base" refs/heads/)
+EOF
+branches="${branches%$'\n'}"
+
+if [ -z "$branches" ]; then ok "no merged branches to delete (base: $base)"; exit 0; fi
+count="$(printf '%s\n' "$branches" | wc -l | tr -d ' ')"
+info "Merged into $base ($count):"
+printf '%s\n' "$branches" | sed 's/^/  /'
+if [ "$DRY_RUN" = 1 ]; then dim "dry run: nothing deleted"; exit 0; fi
+confirm "Delete these $count local branches?" || { info "aborted"; exit 1; }
+while IFS= read -r b; do
+  # -D is safe here: every branch was just verified as merged into $base.
+  git branch -D --quiet "$b" && ok "deleted $b"
+done <<EOF
+$branches
+EOF

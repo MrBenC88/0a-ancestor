@@ -1,0 +1,86 @@
+#!/usr/bin/env bash
+# desc: pull every repo's default branch safely (ff-only, never switches or stashes)
+# Usage: gpa [--dry-run] [--jobs N] [--only GLOB] [--all]
+#
+# For each git repo directly under $DEV_DIR (0a-ancestor only with --all):
+#   1. detect the default branch (origin/HEAD, else main, else master)
+#   2. git fetch --prune origin            (parallel, --jobs N, default 8)
+#   3. on the default branch + clean tree:  git pull --ff-only
+#   4. on another branch:                   git fetch origin <def>:<def> (ff only)
+#   5. never stash, switch or merge; dirty or diverged repos are skipped
+# Dirty = staged or unstaged changes to tracked files (untracked files are fine:
+# git refuses to overwrite them). --dry-run still fetches (remote refs only) so it
+# can report what would update. Exits non-zero if any repo errored.
+set -euo pipefail
+. "$(dirname "$0")/lib/common.sh"
+
+# --- worker: one repo, prints "name<TAB>code<TAB>message" -----------------------
+if [ "${1:-}" = "--_worker" ]; then
+  repo="$2"; name="$(basename "$repo")"
+  out() { printf '%s\t%s\t%s\n' "$name" "$1" "$2"; exit 0; }
+  cd "$repo"
+  git remote get-url origin >/dev/null 2>&1 || out skip "no origin remote"
+  def="$(default_branch .)"
+  git fetch --prune --quiet origin 2>/dev/null || out error "fetch failed"
+  git show-ref --verify --quiet "refs/remotes/origin/$def" || out error "origin/$def not found"
+  git show-ref --verify --quiet "refs/heads/$def" || out skip "no local $def branch"
+  behind="$(git rev-list --count "$def..origin/$def")"
+  ahead="$(git rev-list --count "origin/$def..$def")"
+  if [ "$behind" = 0 ]; then
+    [ "$ahead" = 0 ] && out same "up to date"
+    out same "up to date ($ahead local commits ahead)"
+  fi
+  [ "$ahead" != 0 ] && out diverged "diverged ($ahead ahead, $behind behind)"
+  cur="$(git symbolic-ref --quiet --short HEAD 2>/dev/null || printf '')"
+  if [ "$cur" = "$def" ]; then
+    is_dirty . && out dirty "dirty ($def is checked out with local changes)"
+    [ "${DRY_RUN:-0}" = 1 ] && out would "would update ($behind commits)"
+    git pull --ff-only --quiet 2>/dev/null || out error "pull --ff-only failed"
+  else
+    [ "${DRY_RUN:-0}" = 1 ] && out would "would update ($behind commits, on ${cur:-detached HEAD})"
+    git fetch --quiet origin "$def:$def" 2>/dev/null || out error "could not fast-forward $def (checked out in another worktree?)"
+  fi
+  out updated "updated ($behind commits)"
+fi
+
+# --- main ----------------------------------------------------------------------
+JOBS=8; ALL=""; DRY_RUN=0; ONLY_GLOB=""
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --dry-run|-n) DRY_RUN=1 ;;
+    --jobs|-j) JOBS="${2:?--jobs needs a number}"; shift ;;
+    --only) ONLY_GLOB="${2:?--only needs a glob}"; shift ;;
+    --all) ALL=all ;;
+    -h|--help) usage_from_header "$0"; exit 0 ;;
+    *) die "unknown flag: $1 (see --help)" ;;
+  esac
+  shift
+done
+case "$JOBS" in ''|*[!0-9]*|0) die "--jobs must be a positive number" ;; esac
+export DRY_RUN ONLY_GLOB DEV_DIR ANCESTOR
+
+repos="$(list_repos ${ALL:+"$ALL"})"
+[ -n "$repos" ] || { warn "no git repos under $DEV_DIR${ONLY_GLOB:+ matching '$ONLY_GLOB'}"; exit 0; }
+
+results="$(printf '%s\n' "$repos" | tr '\n' '\0' | xargs -0 -n 1 -P "$JOBS" "$0" --_worker | sort)"
+
+n_up=0; n_same=0; n_skip=0; n_div=0; n_err=0; n_would=0
+while IFS="$(printf '\t')" read -r name code msg; do
+  [ -n "$name" ] || continue
+  case "$code" in
+    updated)  sym="${C_GRN}✓${C_RST}"; n_up=$((n_up+1)) ;;
+    would)    sym="${C_BLU}→${C_RST}"; n_would=$((n_would+1)) ;;
+    same)     sym="${C_DIM}=${C_RST}"; n_same=$((n_same+1)) ;;
+    dirty|skip) sym="${C_YEL}⚠${C_RST}"; msg="skipped: $msg"; n_skip=$((n_skip+1)) ;;
+    diverged) sym="${C_RED}✗${C_RST}"; n_div=$((n_div+1)) ;;
+    *)        sym="${C_RED}✗${C_RST}"; msg="error: $msg"; n_err=$((n_err+1)) ;;
+  esac
+  printf '%-28s %s %s\n' "$name" "$sym" "$msg"
+done <<EOF
+$results
+EOF
+
+summary="updated $n_up · up to date $n_same · skipped $n_skip · diverged $n_div · errors $n_err"
+[ "$DRY_RUN" = 1 ] && summary="would update $n_would · up to date $n_same · skipped $n_skip · diverged $n_div · errors $n_err"
+printf '%s\n' "$summary"
+[ "$n_err" = 0 ]

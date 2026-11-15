@@ -1,0 +1,47 @@
+#!/usr/bin/env bash
+# desc: one line per repo: branch, clean/dirty, ahead/behind upstream
+# Usage: gst-all [--only GLOB] [--all] [--fetch]
+#
+# Reads local state only (no network) unless --fetch. Ahead/behind is against
+# the branch's upstream, or origin/<default> when no upstream is set.
+set -euo pipefail
+. "$(dirname "$0")/lib/common.sh"
+
+ALL=""; FETCH=0; ONLY_GLOB=""
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --only) ONLY_GLOB="${2:?--only needs a glob}"; shift ;;
+    --all) ALL=all ;;
+    --fetch) FETCH=1 ;;
+    -h|--help) usage_from_header "$0"; exit 0 ;;
+    *) die "unknown flag: $1 (see --help)" ;;
+  esac
+  shift
+done
+export ONLY_GLOB
+
+n=0; n_dirty=0
+while IFS= read -r repo; do
+  [ -n "$repo" ] || continue
+  n=$((n+1)); name="$(basename "$repo")"
+  [ "$FETCH" = 1 ] && git -C "$repo" fetch --quiet --prune origin 2>/dev/null || true
+  br="$(git -C "$repo" symbolic-ref --quiet --short HEAD 2>/dev/null || git -C "$repo" rev-parse --short HEAD)"
+  changes="$(git -C "$repo" status --porcelain 2>/dev/null | wc -l | tr -d ' ')"
+  if [ "$changes" = 0 ]; then state="${C_GRN}clean${C_RST}"
+  else state="${C_YEL}dirty($changes)${C_RST}"; n_dirty=$((n_dirty+1)); fi
+  up="$(git -C "$repo" rev-parse --abbrev-ref --symbolic-full-name '@{u}' 2>/dev/null || true)"
+  [ -n "$up" ] || up="origin/$(default_branch "$repo")"
+  ab=""
+  if counts="$(git -C "$repo" rev-list --left-right --count "HEAD...$up" 2>/dev/null)"; then
+    a="${counts%%[[:space:]]*}"; b="${counts##*[[:space:]]}"
+    [ "$a" != 0 ] && ab="$ab ↑$a"
+    [ "$b" != 0 ] && ab="$ab ↓$b"
+    [ -n "$ab" ] || ab=" ="
+  else
+    ab=" (no $up)"
+  fi
+  printf '%-28s %-32s %-18b%s\n' "$name" "$br" "$state" "$ab"
+done <<EOF
+$(list_repos ${ALL:+"$ALL"})
+EOF
+dim "$n repos · $n_dirty dirty"
