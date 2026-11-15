@@ -1,0 +1,5 @@
+# Resolve `. "$(dirname "$0")/lib/common.sh"` relative to each script.
+source-path=SCRIPTDIR
+external-sources=true
+# Backticks inside single-quoted printf formats are literal markdown, not expansions.
+disable=SC2016

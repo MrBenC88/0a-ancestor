@@ -1,0 +1,26 @@
+# shell/local.zsh: machine- and company-specific config. NEVER committed.
+# Created from local.zsh.template by bootstrap.sh. Sourced last by init.zsh.
+
+# Short lowercase company code. Used to name company skills/agents/aliases
+# (deploy-<tag>) and by the pre-commit hook to block leaks. Set by bootstrap.
+export COMPANY_TAG=""
+
+# Internal hostnames the pre-commit hook must block (space-separated).
+# Any http(s) URL written in this file is blocked too.
+BLOCKED_HOSTS=""
+
+# Extra agent tool homes for link-skills (space-separated), e.g. "$HOME/.cursor".
+SKILL_HOMES=""
+
+# Editor override.
+# export EDITOR="vim"
+
+# Kube contexts (names only; credentials stay in ~/.kube/config).
+# export KUBE_PROD_CONTEXT="<prod-context>"
+
+# Tokens: read from the keychain lazily, never at startup and never in a file.
+# jira_token() { security find-generic-password -s "<keychain-item>" -w; }
+
+# Company-specific aliases: always suffixed with the tag.
+# desc: deploy via the company pipeline
+# alias deploy-<company-tag>='...'

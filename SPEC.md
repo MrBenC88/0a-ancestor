@@ -52,7 +52,10 @@ Status: ready to implement · Owner: Ben · Updated: 2026-11-14
 │   │   ├── pr-author.md
 │   │   └── jira-scribe.md
 │   ├── skills/
+│   │   ├── INDEX.md             # one line per skill; maintained by create-skill
 │   │   ├── create-skill/SKILL.md
+│   │   ├── create-agent/SKILL.md
+│   │   ├── caveman/SKILL.md     # terse output mode (token saver)
 │   │   ├── handoff/SKILL.md
 │   │   ├── worklog/SKILL.md
 │   │   ├── new-project/SKILL.md
@@ -63,7 +66,8 @@ Status: ready to implement · Owner: Ben · Updated: 2026-11-14
 │   │   ├── prod-investigate/SKILL.md
 │   │   ├── k8s-triage/SKILL.md
 │   │   ├── prod-logs/SKILL.md
-│   │   └── fe-best-practices/SKILL.md
+│   │   ├── fe-best-practices/SKILL.md
+│   │   └── vercel-react-best-practices/SKILL.md   # + references/
 │   ├── scripts/             # all executable, all on $PATH via shell/
 │   │   ├── gpa              # git pull all repos' default branches
 │   │   ├── gst-all          # status of every repo, one line each
@@ -71,9 +75,13 @@ Status: ready to implement · Owner: Ben · Updated: 2026-11-14
 │   │   ├── new-project      # scaffold per-repo files
 │   │   ├── index-repos      # write ~/dev/REPOS.md
 │   │   ├── gen-agents       # canonical agents -> per-tool copies
+│   │   ├── link-skills      # skills/ + company/skills/ -> each tool's skills dir
 │   │   ├── k8s-summary      # pods/events/restarts, summarized
 │   │   ├── logs-errors      # recent error lines, grouped + counted
-│   │   └── lib/common.sh    # shared helpers (colors, repo iteration)
+│   │   └── lib/
+│   │       ├── common.sh        # shared helpers (colors, repo iteration)
+│   │       └── pre-commit-hook  # blocks COMPANY_TAG / internal hosts
+│   ├── .gitattributes       # LF endings for scripts
 │   ├── shell/
 │   │   ├── init.zsh         # single entry point sourced from ~/.zshrc
 │   │   ├── env.zsh          # DEV_DIR, PATH, EDITOR
@@ -136,7 +144,7 @@ Steps:
 
 1. Resolve `DEV_DIR` as the parent of the repo (default `~/dev`).
 2. Symlink `~/dev/AGENTS.md` and `~/dev/CLAUDE.md` into the repo.
-3. Link `skills/*` and `company/skills/*` into each tool's user-level skills dir that exists or is configured: `~/.claude/skills`, `~/.codex/skills`, `~/.agents/skills`.
+3. Run `scripts/link-skills`: link `skills/*` and `company/skills/*` into each tool's user-level skills dir that exists or is configured: `~/.claude/skills`, `~/.codex/skills`, `~/.agents/skills`.
 4. Run `scripts/gen-agents` to write per-tool agent files from `agents/` and `company/agents/` (`~/.claude/agents/`, `~/.codex/agents/`).
 5. Shell: append **one guarded line** to `~/.zshrc` if absent:
    `[ -f "$HOME/dev/0a-ancestor/shell/init.zsh" ] && source "$HOME/dev/0a-ancestor/shell/init.zsh"`
@@ -308,7 +316,9 @@ This is a **default behavior for every agent on every prompt**, not something th
 | `prod-investigate` | Structured incident flow: symptom → scope → recent deploys → logs → k8s state → hypothesis → next check |
 | `k8s-triage` | Wraps `k8s-summary`; interprets output, suggests next read-only command |
 | `prod-logs` | Wraps `logs-errors`; groups, dedupes, links errors to code paths |
-| `fe-best-practices` | Frontend conventions (React/Next perf, a11y, bundle size) for review and implementation |
+| `fe-best-practices` | Frontend conventions (a11y, bundle size, component structure) for review and implementation; defers React/Next perf rules to `vercel-react-best-practices` |
+| `caveman` | Terse output mode: drops filler, articles and pleasantries while keeping full technical accuracy. Levels `lite` / `full` (default) / `ultra`. Code, commits, PRs and security warnings stay in normal prose. Toggled by "caveman mode" / "stop caveman" |
+| `vercel-react-best-practices` | React + Next.js performance rules (waterfalls, server/client boundaries, bundle splitting, re-render control, caching), ranked by impact; rule detail in `references/`, loaded per category |
 
 Jira skills use whatever is available, in order: a Jira MCP connector → `jira-cli` → REST via `curl` with a token from the keychain. Never paste tokens into files.
 
@@ -410,6 +420,7 @@ No per-repo `handout.md`; handoffs are central.
 - **Delegate reading:** exploration runs in a light-tier read-only subagent; only conclusions return.
 - **Fresh sessions:** one session per task; carry state with `/handoff`.
 - **Short skill descriptions:** one sentence each.
+- **Terse output:** `/caveman` cuts response tokens on long sessions; it never applies to code, commit messages, PR text, handoff notes or security warnings.
 - **Prune monthly:** remove or merge anything unused.
 
 ---
@@ -447,9 +458,9 @@ Build in phases; each phase ends with its checks passing and a commit.
 | Phase | Deliverables | Done when |
 | --- | --- | --- |
 | 1. Skeleton | Layout, `.gitignore`, README, root AGENTS.md + CLAUDE.md, templates, `me/` templates | `git status` shows no real data files tracked; AGENTS.md ≤ 100 lines |
-| 2. Bootstrap | `bootstrap.sh` with `--check`, `--dry-run`, `--brew`; Brewfile | Runs twice with no changes on 2nd run; `--check` reports all green |
+| 2. Bootstrap | `bootstrap.sh` with `--check`, `--dry-run`, `--brew`; Brewfile; pre-commit hook | Runs twice with no changes on 2nd run; `--check` reports all green |
 | 3. Shell | `shell/*.zsh`, `gpa`, `gst-all`, `gclean`, `aliases` command | `shellcheck` clean; `gpa --dry-run` correct on a dirty, a diverged and a clean repo; startup < 50 ms added |
-| 4. Skills | Generalize rule in AGENTS.md; `create-skill` and `create-agent` first, then the other starter skills | Each has frontmatter + Output section, ≤ 150 lines; a test `-<company-tag>` skill lands in `company/` and `git status` doesn't show it |
+| 4. Skills | Generalize rule in AGENTS.md; `create-skill` and `create-agent` first, then the other starter skills incl. `caveman` and `vercel-react-best-practices` | Each has frontmatter + Output section, ≤ 150 lines; a test `-<company-tag>` skill lands in `company/` and `git status` doesn't show it |
 | 5. Agents | 8 agents, `models.md`, `gen-agents`, `delegation.md` | `gen-agents` produces valid Claude + Codex files from `agents/` and `company/agents/` |
 | 6. Repo tools | `new-project`, `index-repos`, `k8s-summary`, `logs-errors` | `new-project` is idempotent; `index-repos` writes REPOS.md for all repos |
 
@@ -460,6 +471,8 @@ Constraints for all phases:
 - Nothing destructive without `--dry-run` support and a confirm prompt.
 - No company names, URLs or credentials anywhere in tracked files. Examples and docs always use the placeholder `<company-tag>`, never a real tag. The real value lives only in `shell/local.zsh` and `me/context.md`.
 - Add a pre-commit hook (installed by bootstrap) that blocks a commit if any staged file contains the configured `COMPANY_TAG` or a hostname listed in `local.zsh`.
+- Scripts stay bash 3.2-compatible (macOS `/bin/bash`): no associative arrays, `mapfile` or `wait -n`.
+- Third-party skills (e.g. `caveman`, `vercel-react-best-practices`) are rewritten in our own words to our format, not vendored; credit the original in a one-line note at the end of the skill.
 
 ---
 
