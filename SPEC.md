@@ -1,6 +1,6 @@
 # 0a-ancestor — Agent Setup Template Spec
 
-Status: ready to implement · Owner: Ben · Updated: 2026-11-14
+Status: implemented (macOS acceptance checks pending) · Owner: Ben · Updated: 2026-11-14
 
 ## 1. Summary
 
@@ -217,7 +217,7 @@ Startup must stay fast: no network calls, no `brew --prefix` in hot paths, lazy-
 For every git repo directly under `$DEV_DIR` (skip `0a-ancestor` unless `--all`):
 
 1. Detect default branch: `git symbolic-ref refs/remotes/origin/HEAD`, fall back to `main`, then `master`.
-2. `git fetch --prune origin` (parallel across repos, max 8 jobs).
+2. `git fetch --prune origin` (parallel across repos; 8 jobs by default, `--jobs N` overrides).
 3. If the current branch **is** the default and the tree is clean: `git pull --ff-only`.
 4. If on another branch: fast-forward the local default branch without switching: `git fetch origin <def>:<def>` (only if it is a fast-forward).
 5. Never stash, never switch branches, never merge. Dirty or diverged repos are **skipped and reported**.
@@ -481,7 +481,7 @@ Constraints for all phases:
 - [ ] Which agent tools and Jira access does the company approve?
 - [ ] Once Claude Code reads AGENTS.md natively, drop the CLAUDE.md shim?
 - [ ] Move handoffs to an MCP-based tool later?
-- [ ] License (MIT?).
+- [x] License: MIT (see `LICENSE`).
 
 ## Sources
 
