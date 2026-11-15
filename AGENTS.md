@@ -35,6 +35,7 @@ Before creating, check whether an existing skill or agent covers it. If one does
 - Delegate broad reading to a light-tier read-only subagent; only conclusions come back (≤ 15 lines).
 - One session per task. Carry state across sessions and tools with `/handoff`, not long chats.
 - Never dump whole files or logs into context when a grep, summary script or line range will do.
+- On request ("caveman", "be brief", "less tokens") switch to `/caveman` replies; never for code, commits, PRs or handoffs.
 - Full rules: `0a-ancestor/docs/token-rules.md`.
 
 ## Delegation and models
