@@ -1,0 +1,22 @@
+# Personal data: only templates are tracked
+me/*.md
+!me/*.template.md
+
+# Handoff notes are local working state
+handoff/**
+!handoff/.gitkeep
+
+# Machine/company-specific shell config
+shell/local.zsh
+
+# Company-specific skills/agents: never committed
+company/**
+!company/.gitkeep
+
+# Anything marked local, and env files
+*.local.*
+.env*
+
+# Bootstrap backups and OS noise
+*.bak.*
+.DS_Store
