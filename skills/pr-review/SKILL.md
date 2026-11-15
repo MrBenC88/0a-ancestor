@@ -1,6 +1,6 @@
 ---
 name: pr-review
-description: Use when asked to review a PR or a local diff, to check it against AGENTS.md conventions and return findings ranked by severity.
+description: Use when asked to review a PR, local diff, or repository completion status against its requirements and conventions.
 ---
 
 # pr-review
@@ -29,6 +29,10 @@ Prefer running this in a fresh-context `code-reviewer` subagent so the author's 
 ## Severity
 
 `blocker` breaks prod/security/data · `major` bug or missing test for core path · `minor` edge case, maintainability · `nit` optional.
+
+## Repository completion check
+
+When asked whether a repo is done, compare its spec and latest handoff with tracked deliverables, TODO markers, and actual validation results. Separate unfinished implementation from setup requirements, template checkboxes, and optional decisions. A merged branch or clean tree alone does not prove completion. Report unavailable checks explicitly; do not install or configure the user's environment just to audit it.
 
 ## Output
 
