@@ -3,7 +3,7 @@
 # Usage: gen-agents [--check] [--dry-run] [--out DIR]
 #
 # Reads canonical agents/<name>.md and company/agents/<name>.md (frontmatter:
-# name, description, tier, tools, output) and writes:
+# name, description, tier, tools, output; optional codex_sandbox) and writes:
 #   ~/.claude/agents/<name>.md    (tier -> model via models.md)
 #   ~/.codex/agents/<name>.toml   (tier -> model + reasoning effort)
 # Only for tools whose base dir (~/.claude, ~/.codex) exists.
@@ -86,12 +86,13 @@ render_claude() { # file name desc tier tools output
 }
 
 render_codex() { # file name desc tier tools output
-  local b; b="$(body "$1")"
+  local b sb; b="$(body "$1")"
+  sb="$(fm "$1" codex_sandbox)"; [ -n "$sb" ] || sb="$(codex_sandbox "$5")"
   case "$b" in *"'''"*) die "$1: body contains ''' which TOML literal strings can't hold" ;; esac
   printf '# %s from %s; edit that file, then re-run gen-agents\n' "$MARKER" "${1#"$ANCESTOR"/}"
   printf 'name = "%s"\ndescription = "%s"\n' "$2" "$(esc "$3")"
   printf 'model = "%s"\nmodel_reasoning_effort = "%s"\n' "$(model_col "$4" 3)" "$(model_col "$4" 4)"
-  printf 'sandbox_mode = "%s"\n' "$(codex_sandbox "$5")"
+  printf 'sandbox_mode = "%s"\n' "$sb"
   printf "developer_instructions = '''\n%s\n" "$b"
   [ -n "$6" ] && printf '\nOutput contract: %s\n' "$6"
   printf "'''\n"
