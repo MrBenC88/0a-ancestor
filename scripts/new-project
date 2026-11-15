@@ -1,0 +1,88 @@
+#!/usr/bin/env bash
+# desc: scaffold AGENTS.md, CLAUDE.md, SPEC.md, CHANGELOG.md in a repo (skips existing)
+# Usage: new-project [PATH] [--decisions] [--copilot] [--dry-run]
+#
+# Creates per-repo agent files from 0a-ancestor/templates. Never overwrites:
+# files that already exist are skipped, so it is safe to re-run.
+#   --decisions   also create DECISIONS.md
+#   --copilot     also create .github/copilot-instructions.md (one-line pointer)
+# AGENTS.md gets build/test/lint commands detected from package.json, Makefile,
+# go.mod, Cargo.toml or pyproject.toml; fill in the rest by hand or via /new-project.
+set -euo pipefail
+. "$(dirname "$0")/lib/common.sh"
+
+TARGET="."; DECISIONS=0; COPILOT=0; DRY_RUN=0
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --decisions) DECISIONS=1 ;;
+    --copilot) COPILOT=1 ;;
+    --dry-run|-n) DRY_RUN=1 ;;
+    -h|--help) usage_from_header "$0"; exit 0 ;;
+    -*) die "unknown flag: $1 (see --help)" ;;
+    *) TARGET="$1" ;;
+  esac
+  shift
+done
+[ -d "$TARGET" ] || die "no such dir: $TARGET"
+TARGET="$(cd "$TARGET" && pwd -P)"
+[ "$TARGET" = "$ANCESTOR" ] && die "refusing to scaffold inside 0a-ancestor itself"
+PROJECT="$(basename "$TARGET")"
+TODAY="$(date +%Y-%m-%d)"
+T="$ANCESTOR/templates"
+
+# detect_commands -> markdown bullet lines for the Commands section.
+# shellcheck disable=SC2329  # called via make_file
+detect_commands() {
+  local r="$TARGET" pm="npm" s found=0
+  if [ -f "$r/package.json" ]; then
+    [ -f "$r/pnpm-lock.yaml" ] && pm="pnpm"
+    [ -f "$r/yarn.lock" ] && pm="yarn"
+    [ -f "$r/bun.lockb" ] || [ -f "$r/bun.lock" ] && pm="bun"
+    printf -- '- Install: `%s install`\n' "$pm"
+    for s in dev build test lint typecheck format; do
+      if grep -qE "\"$s\"[[:space:]]*:" "$r/package.json"; then
+        printf -- '- %s: `%s run %s`\n' "$s" "$pm" "$s"; found=1
+      fi
+    done
+  fi
+  if [ -f "$r/Makefile" ]; then
+    for s in build test lint fmt run; do
+      grep -qE "^$s:" "$r/Makefile" && { printf -- '- %s: `make %s`\n' "$s" "$s"; found=1; }
+    done
+  fi
+  [ -f "$r/go.mod" ] && { printf -- '- build: `go build ./...`\n- test: `go test ./...`\n- lint: `go vet ./...`\n'; found=1; }
+  [ -f "$r/Cargo.toml" ] && { printf -- '- build: `cargo build`\n- test: `cargo test`\n- lint: `cargo clippy`\n'; found=1; }
+  [ -f "$r/pyproject.toml" ] && { printf -- '- test: `pytest`\n- lint: `ruff check .`\n'; found=1; }
+  [ "$found" = 1 ] || printf -- '- build: `<command>`\n- test: `<command>`\n- lint: `<command>`\n'
+}
+
+# fill SRC -> template with placeholders replaced, on stdout.
+# shellcheck disable=SC2329  # called via make_file
+fill() {
+  local cmds; cmds="$(detect_commands)"
+  # ENVIRON, not -v: BSD awk rejects newlines in -v values.
+  NP_PROJECT="$PROJECT" NP_DATE="$TODAY" NP_CMDS="$cmds" awk '
+    { gsub(/\{\{PROJECT\}\}/, ENVIRON["NP_PROJECT"]); gsub(/\{\{DATE\}\}/, ENVIRON["NP_DATE"])
+      if ($0 == "{{COMMANDS}}") { print ENVIRON["NP_CMDS"]; next } print }' "$1"
+}
+
+created=0; skipped=0
+make_file() { # DST CONTENT-COMMAND...
+  local dst="$TARGET/$1"; shift
+  if [ -e "$dst" ]; then dim "skip  $1 (exists)"; skipped=$((skipped+1)); return 0; fi
+  if [ "$DRY_RUN" = 1 ]; then dim "would create ${dst#"$TARGET"/}"; created=$((created+1)); return 0; fi
+  mkdir -p "$(dirname "$dst")"
+  "$@" > "$dst"
+  ok "created ${dst#"$TARGET"/}"; created=$((created+1))
+}
+
+make_file AGENTS.md fill "$T/AGENTS.project.md"
+make_file CLAUDE.md printf '@AGENTS.md\n'
+make_file SPEC.md fill "$T/SPEC.md"
+make_file CHANGELOG.md cat "$T/CHANGELOG.md"
+[ "$DECISIONS" = 1 ] && make_file DECISIONS.md fill "$T/DECISIONS.md"
+[ "$COPILOT" = 1 ] && make_file .github/copilot-instructions.md cat "$ANCESTOR/editor/.github/copilot-instructions.md"
+
+dim "$PROJECT: created $created · skipped $skipped"
+[ "$created" -gt 0 ] && [ "$DRY_RUN" = 0 ] && info "Next: fill SPEC.md (or run /new-project), then index-repos"
+exit 0

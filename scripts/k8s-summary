@@ -1,0 +1,79 @@
+#!/usr/bin/env bash
+# desc: read-only cluster summary: unhealthy pods, top restarts, recent warnings (<= 40 lines)
+# Usage: k8s-summary [-n NAMESPACE] [--context CTX] [--full]
+#
+# Read-only: uses only `kubectl get`. All namespaces unless -n.
+# --full prints the raw pod and event tables instead of the summary.
+set -euo pipefail
+. "$(dirname "$0")/lib/common.sh"
+
+NS=""; CTX=""; FULL=0
+while [ $# -gt 0 ]; do
+  case "$1" in
+    -n|--namespace) NS="${2:?-n needs a namespace}"; shift ;;
+    --context) CTX="${2:?--context needs a name}"; shift ;;
+    --full) FULL=1 ;;
+    -h|--help) usage_from_header "$0"; exit 0 ;;
+    *) die "unknown flag: $1 (see --help)" ;;
+  esac
+  shift
+done
+need kubectl "install it or run brew bundle"
+
+kc() { kubectl ${CTX:+--context "$CTX"} "$@"; }
+if [ -n "$NS" ]; then scope="-n $NS"; else scope="-A"; fi
+
+if [ "$FULL" = 1 ]; then
+  # shellcheck disable=SC2086  # scope is two words or one flag
+  kc get pods $scope -o wide
+  # shellcheck disable=SC2086
+  kc get events $scope --field-selector type=Warning --sort-by=.lastTimestamp
+  exit 0
+fi
+
+ctx="${CTX:-$(kubectl config current-context 2>/dev/null || printf '?')}"
+cols='NS:.metadata.namespace,NAME:.metadata.name,PHASE:.status.phase,READY:.status.containerStatuses[*].ready,RESTARTS:.status.containerStatuses[*].restartCount,WAITING:.status.containerStatuses[*].state.waiting.reason,TERMINATED:.status.containerStatuses[*].lastState.terminated.reason'
+# shellcheck disable=SC2086
+pods="$(kc get pods $scope --no-headers -o "custom-columns=$cols" 2>&1)" || die "kubectl get pods failed: $pods"
+
+printf '%sContext:%s %s   %sScope:%s %s\n' "$C_BLD" "$C_RST" "$ctx" "$C_BLD" "$C_RST" "${NS:-all namespaces}"
+
+printf '%s\n' "$pods" | awk -v B="$C_BLD" -v R="$C_RST" '
+  NF < 3 { next }
+  {
+    total++
+    ns=$1; name=$2; phase=$3; ready=$4; rs=$5; wait=$6; term=$7
+    nr=split(ready, ra, ","); notready=0
+    for (i=1; i<=nr; i++) if (ra[i] != "true") notready++
+    nrs=split(rs, rr, ","); restarts=0
+    for (i=1; i<=nrs; i++) if (rr[i] ~ /^[0-9]+$/) restarts += rr[i]
+    reason=""
+    if (wait != "<none>" && wait != "") reason=wait
+    if (reason == "" && term != "<none>" && term != "") reason="last: " term
+    bad = (phase != "Running" && phase != "Succeeded") || (phase == "Running" && notready > 0) || (wait != "<none>" && wait != "")
+    if (bad) { nb++; if (nb <= 15) unhealthy[nb]=sprintf("  %-20s %-44s %-10s %s", ns, name, phase, reason) }
+    if (restarts > 0) { nrst++; line[nrst]=sprintf("%08d  %-20s %-44s %s", restarts, ns, name, reason) }
+  }
+  END {
+    printf "%sPods:%s %d total, %d unhealthy, %d with restarts\n", B, R, total, nb, nrst
+    if (nb > 0) { printf "%sUnhealthy%s (first 15):\n", B, R; for (i=1; i<=nb && i<=15; i++) print unhealthy[i] }
+    if (nrst > 0) {
+      # simple sort by restart count, descending (n is small)
+      for (i=1; i<=nrst; i++) for (j=i+1; j<=nrst; j++) if (line[j] > line[i]) { t=line[i]; line[i]=line[j]; line[j]=t }
+      printf "%sTop restarts:%s\n", B, R
+      for (i=1; i<=nrst && i<=8; i++) { s=line[i]; n=substr(s,1,8)+0; printf "  %5d %s\n", n, substr(s,11) }
+    }
+  }'
+
+ecols='LAST:.lastTimestamp,NS:.metadata.namespace,OBJ:.involvedObject.name,REASON:.reason,MSG:.message'
+# shellcheck disable=SC2086
+if events="$(kc get events $scope --field-selector type=Warning --sort-by=.lastTimestamp --no-headers -o "custom-columns=$ecols" 2>/dev/null)" && [ -n "$events" ]; then
+  printf '%sRecent warnings%s (newest 10):\n' "$C_BLD" "$C_RST"
+  printf '%s\n' "$events" | tail -n 10 | awk '{
+    ts=$1; ns=$2; obj=$3; rsn=$4; $1=$2=$3=$4=""; msg=$0; sub(/^ +/, "", msg)
+    if (length(msg) > 70) msg=substr(msg, 1, 67) "..."
+    printf "  %s %-14s %-30s %-16s %s\n", substr(ts, 12, 8), ns, substr(obj, 1, 30), rsn, msg }' | sort -r
+else
+  printf '%sRecent warnings:%s none\n' "$C_BLD" "$C_RST"
+fi
+dim "Next: kubectl describe pod <name> -n <ns> for a flagged pod; klogs <pod> for logs."

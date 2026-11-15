@@ -1,0 +1,84 @@
+#!/usr/bin/env bash
+# desc: recent error lines from a log source, grouped by message with counts
+# Usage: logs-errors <source> [--since 1h] [--top N] [--pattern REGEX] [--full]
+#
+# <source> is one of:
+#   FILE or DIR      a log file, or every *.log under a dir
+#   -                stdin (e.g. `some-cli logs | logs-errors -`)
+#   k8s:POD          kubectl logs for a pod (all containers)
+#   k8s:KEY=VALUE    kubectl logs for a label selector (e.g. k8s:app=api)
+# Named sources for your company live in me/context.md (log_sources:); look one
+# up there and pass its form here. Read-only.
+#
+# Lines matching --pattern (default: error/exception/fatal/panic/traceback)
+# are normalized (timestamps, ids, numbers, hex -> placeholders) and grouped.
+# Output: top N groups (default 15) with count and one example; --full prints
+# the raw matching lines instead.
+set -euo pipefail
+. "$(dirname "$0")/lib/common.sh"
+
+SRC=""; SINCE="1h"; TOP=15; FULL=0
+PATTERN='(error|exception|fatal|panic|traceback|critical|level=(error|fatal)|"level":"(error|fatal)")'
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --since) SINCE="${2:?--since needs a duration}"; shift ;;
+    --top) TOP="${2:?--top needs a number}"; shift ;;
+    --pattern) PATTERN="${2:?--pattern needs a regex}"; shift ;;
+    --full) FULL=1 ;;
+    -h|--help) usage_from_header "$0"; exit 0 ;;
+    -) SRC="-" ;;
+    -*) die "unknown flag: $1 (see --help)" ;;
+    *) SRC="$1" ;;
+  esac
+  shift
+done
+[ -n "$SRC" ] || { usage_from_header "$0" >&2; exit 2; }
+case "$TOP" in ''|*[!0-9]*) die "--top must be a number" ;; esac
+
+read_source() {
+  case "$SRC" in
+    -) cat ;;
+    k8s:*=*) need kubectl; kubectl logs -l "${SRC#k8s:}" --all-containers --prefix --since="$SINCE" --max-log-requests=20 --tail=-1 ;;
+    k8s:*) need kubectl; kubectl logs "${SRC#k8s:}" --all-containers --prefix --since="$SINCE" ;;
+    *)
+      if [ -d "$SRC" ]; then find "$SRC" -type f -name '*.log' -exec cat {} +
+      elif [ -f "$SRC" ]; then cat "$SRC"
+      else die "no such source: $SRC (see --help)"; fi ;;
+  esac
+}
+
+matches="$(read_source | grep -iE -- "$PATTERN" || true)"
+if [ -z "$matches" ]; then ok "no error lines in $SRC${SINCE:+ (since $SINCE for k8s)}"; exit 0; fi
+total="$(printf '%s\n' "$matches" | wc -l | tr -d ' ')"
+
+if [ "$FULL" = 1 ]; then printf '%s\n' "$matches"; exit 0; fi
+
+grouped="$(mktemp)"; trap 'rm -f "$grouped"' EXIT
+# Normalize: pull JSON message fields if present, then mask variable parts.
+printf '%s\n' "$matches" | awk '
+  {
+    raw=$0; m=$0
+    if (match(m, /"(msg|message|error)":"[^"]*"/)) { m=substr(m, RSTART, RLENGTH); sub(/^"[a-z]+":"/, "", m); sub(/"$/, "", m) }
+    sub(/^\[[^]]*\] /, "", m)                                                     # kubectl --prefix
+    gsub(/[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9][T ][0-9:.,]+(Z|[+-][0-9:]+)?/, "<ts>", m)  # ISO timestamps
+    gsub(/[0-9a-fA-F]+-[0-9a-fA-F]+-[0-9a-fA-F]+-[0-9a-fA-F]+-[0-9a-fA-F]+/, "<uuid>", m)  # no {n}: old mawk
+    gsub(/0x[0-9a-fA-F]+/, "<hex>", m)
+    gsub(/[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]+/, "<id>", m)
+    gsub(/[0-9]+(\.[0-9]+)*/, "<n>", m)
+    gsub(/[ \t]+/, " ", m); sub(/^ /, "", m)
+    key=substr(m, 1, 160)
+    if (!(key in count)) { order[++n]=key; example[key]=substr(raw, 1, 200) }
+    count[key]++
+  }
+  END { for (i=1; i<=n; i++) printf "%d\t%s\t%s\n", count[order[i]], order[i], example[order[i]] }' \
+  | sort -t "$(printf '\t')" -k1,1nr > "$grouped"
+groups="$(wc -l < "$grouped" | tr -d ' ')"
+
+printf '%s%s error lines, %s groups%s (source: %s)\n' "$C_BLD" "$total" "$groups" "$C_RST" "$SRC"
+head -n "$TOP" "$grouped" | while IFS="$(printf '\t')" read -r c key ex; do
+  printf '%6d  %s\n' "$c" "$key"
+  [ "$key" != "$ex" ] && printf '%s        e.g. %s%s\n' "$C_DIM" "${ex:0:150}" "$C_RST"
+  true
+done
+[ "$groups" -gt "$TOP" ] && dim "… $((groups - TOP)) more groups (--top N, or --full for raw lines)"
+exit 0
